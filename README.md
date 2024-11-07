@@ -6,6 +6,11 @@ Lab work
 - blog
 - social media/twitter
 
+Ecommerce.zip - backend
+ecommerce_backend.sql 
+
+for ecommerce backend
+
 MySQL
 React
 Node.js
