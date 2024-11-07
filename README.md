@@ -41,7 +41,7 @@ USE ecommerce_db;
 
 1. Directory Structure
 Backend (Node.js)
-
+```
 ecommerce-backend/
 │
 ├── controllers/            # Business logic for routes
@@ -60,10 +60,10 @@ ecommerce-backend/
 │
 ├── server.js               # Main server file
 └── .env                    # Environment variables
-
+```
 
 Frontend (React)
-
+```
 ecommerce-frontend/
 │
 ├── public/
@@ -91,6 +91,8 @@ ecommerce-frontend/
 │   ├── index.js             # Entry point
 │   └── App.css              # Basic styling
 └── .env                     # Environment variables for frontend
+```
+
 2. Database Schema (MySQL)
 Here is the schema for the main tables used in this e-commerce platform:
 
