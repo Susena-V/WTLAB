@@ -1,6 +1,6 @@
 # WTLAB
 Lab work
-- Ecommerce
+- Ecommerce - ecommerce.zip has backend perfectly (frontend use ECOM-F)
 - Learning platform
 - job reqruitment
 - blog
