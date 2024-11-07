@@ -19,7 +19,8 @@ mkdir ecommerce-backend
 cd ecommerce-backend
 npm init -y
 
-npm install express mysql2 bcryptjs jsonwebtoken cors body-parser
+npm install express mysql2 body-parser cors jsonwebtoken bcryptjs dotenv nodemon multer express-validator
+body-parser
 ```
 
 React
