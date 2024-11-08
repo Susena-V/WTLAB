@@ -1,0 +1,232 @@
+const express = require('express');
+const mysql = require('mysql2');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const dotenv = require('dotenv');
+
+dotenv.config();
+
+const app = express();
+app.use(express.json());
+
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root', 
+    password: 'sowmya', 
+    database: 'chat_app',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+const authenticate = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(403).json({ error: 'Access denied' });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
+};
+
+// User registration
+app.post('/signup', async (req, res) => {
+    const { username, password, email } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const sql = 'INSERT INTO users (username, password, email) VALUES (?, ?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [username, hashedPassword, email]);
+        res.status(201).json({ message: 'User created', user_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Login
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    const sql = 'SELECT * FROM users WHERE username = ?';
+    try {
+        const [rows] = await pool.promise().query(sql, [username]);
+        const user = rows[0];
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) return res.status(400).json({ error: 'Invalid password' });
+
+        const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ message: 'Login successful', token });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Create a group
+app.post('/groups', authenticate, async (req, res) => {
+    const { name } = req.body;
+    const sql = 'INSERT INTO groups (name, created_by) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [name, req.user.id]);
+        res.status(201).json({ message: 'Group created', group_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Add members to a group
+app.post('/groups/:groupId/members', authenticate, async (req, res) => {
+    const { groupId } = req.params;
+    const { user_id } = req.body;
+    const sql = 'INSERT INTO group_members (group_id, user_id) VALUES (?, ?)';
+    try {
+        await pool.promise().query(sql, [groupId, user_id]);
+        res.status(201).json({ message: 'Member added to group' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Send a message
+app.post('/groups/:groupId/messages', authenticate, async (req, res) => {
+    const { groupId } = req.params;
+    const { message } = req.body;
+    const sql = 'INSERT INTO messages (group_id, sender_id, message) VALUES (?, ?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [groupId, req.user.id, message]);
+        res.status(201).json({ message: 'Message sent', message_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Create notification
+app.post('/notifications', authenticate, async (req, res) => {
+    const { user_id, message } = req.body;
+    const sql = 'INSERT INTO notifications (user_id, message) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [user_id, message]);
+        res.status(201).json({ message: 'Notification created', notification_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fetch notifications
+app.get('/notifications', authenticate, async (req, res) => {
+    const sql = 'SELECT * FROM notifications WHERE user_id = ? AND seen = FALSE';
+    try {
+        const [notifications] = await pool.promise().query(sql, [req.user.id]);
+        res.json(notifications);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+/*
+-- Create 'users' table
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(255) NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL
+);
+
+-- Create 'groups' table
+CREATE TABLE groups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_by INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
+-- Create 'group_members' table
+CREATE TABLE group_members (
+    group_id INT,
+    user_id INT,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, user_id),
+    FOREIGN KEY (group_id) REFERENCES groups(id),
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Create 'messages' table
+CREATE TABLE messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    group_id INT,
+    sender_id INT,
+    message TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES groups(id),
+    FOREIGN KEY (sender_id) REFERENCES users(id)
+);
+
+-- Create 'notifications' table
+CREATE TABLE notifications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    message VARCHAR(255) NOT NULL,
+    seen BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+-- Insert sample users (with hashed passwords for security)
+INSERT INTO users (username, password, email) VALUES
+('alice', '$2a$10$E1BM3JWJxu.K1cIqg1dMBuCt63I/fMvxePZdl6IDRe4e2uGVBFtXO', 'alice@example.com'), -- Password: alice123
+('bob', '$2a$10$BbXbOt/gnOfpLpFGEXl/5.VHsZOVt7N1KmZAF4XJdIRcRV9q/zZy2', 'bob@example.com'), -- Password: bob123
+('charlie', '$2a$10$5vllvj6j.m0i.kHt8/Ymo.kOdLU.kDj8aLRI.AljlsZbTI9cBC47W', 'charlie@example.com'); -- Password: charlie123
+
+-- Insert sample groups
+INSERT INTO groups (name, created_by) VALUES
+('Friends Group', 1),   -- Created by Alice
+('Work Group', 2);      -- Created by Bob
+
+-- Insert sample group members
+INSERT INTO group_members (group_id, user_id) VALUES
+(1, 1), -- Alice in Friends Group
+(1, 2), -- Bob in Friends Group
+(1, 3), -- Charlie in Friends Group
+(2, 2), -- Bob in Work Group
+(2, 3); -- Charlie in Work Group
+
+-- Insert sample messages
+INSERT INTO messages (group_id, sender_id, message) VALUES
+(1, 1, 'Hello, everyone!'),      -- Alice sends a message to Friends Group
+(1, 2, 'Hi Alice!'),             -- Bob replies in Friends Group
+(1, 3, 'Hey there!'),            -- Charlie replies in Friends Group
+(2, 2, 'Work meeting at 10 AM'), -- Bob sends message to Work Group
+(2, 3, 'Noted, thanks!');        -- Charlie replies in Work Group
+
+-- Insert sample notifications
+INSERT INTO notifications (user_id, message) VALUES
+(1, 'You have been added to Friends Group'),    -- Notification for Alice
+(2, 'You have been added to Friends Group'),    -- Notification for Bob
+(3, 'You have been added to Friends Group'),    -- Notification for Charlie
+(2, 'You have been added to Work Group'),       -- Notification for Bob
+(3, 'You have been added to Work Group');       -- Notification for Charlie
+
+Thunder Client Commands:
+
+1)Create a Group
+
+POST /groups
+Body: { "name": "My Group" }
+Authorization: Bearer Token with JWT
+
+2)Send a Message in Group
+
+POST /groups/1/messages
+Body: { "message": "Hello everyone!" }
+Authorization: Bearer Token with JWT
+
+3)Fetch Notifications
+
+GET /notifications
+Authorization: Bearer Token with JWT
+*/
