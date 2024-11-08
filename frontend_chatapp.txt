@@ -1,0 +1,224 @@
+import React, { useState } from 'react';
+import './App.css';
+
+function App() {
+  const [groups, setGroups] = useState({});
+  const [currentGroup, setCurrentGroup] = useState(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const [newMessage, setNewMessage] = useState("");
+  const [newMember, setNewMember] = useState("");
+  const [notification, setNotification] = useState(""); // Notification state
+
+  const createGroup = () => {
+    if (newGroupName && !groups[newGroupName]) {
+      setGroups({
+        ...groups,
+        [newGroupName]: { messages: [], members: [] },
+      });
+      setNotification(`Group '${newGroupName}' created!`);
+      setNewGroupName("");
+    }
+  };
+
+  const selectGroup = (groupName) => {
+    setCurrentGroup(groupName);
+    setNotification(`Switched to '${groupName}'`);
+  };
+
+  const sendMessage = () => {
+    if (newMessage && currentGroup) {
+      setGroups({
+        ...groups,
+        [currentGroup]: {
+          ...groups[currentGroup],
+          messages: [...groups[currentGroup].messages, newMessage],
+        },
+      });
+      setNotification(`Message sent to '${currentGroup}'`);
+      setNewMessage("");
+    }
+  };
+
+  const addMember = () => {
+    if (newMember && currentGroup && !groups[currentGroup].members.includes(newMember)) {
+      setGroups({
+        ...groups,
+        [currentGroup]: {
+          ...groups[currentGroup],
+          members: [...groups[currentGroup].members, newMember],
+        },
+      });
+      setNotification(`Member '${newMember}' added to '${currentGroup}'`);
+      setNewMember("");
+    }
+  };
+
+  return (
+    <div id="app">
+      <div className="notification">{notification}</div>
+      <div className="sidebar">
+        <h2>Groups</h2>
+        <input
+          type="text"
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          placeholder="Enter group name"
+        />
+        <button onClick={createGroup}>Create Group</button>
+        <div id="groups">
+          {Object.keys(groups).map((group) => (
+            <div key={group} onClick={() => selectGroup(group)}>
+              {group}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="chat-section">
+        <h2 id="group-title">
+          {currentGroup ? `Group: ${currentGroup}` : "Select a Group"}
+        </h2>
+        {currentGroup && (
+          <>
+            <div id="chat-window">
+              {groups[currentGroup].messages.map((msg, index) => (
+                <div key={index} className="message">{msg}</div>
+              ))}
+            </div>
+            <div id="members">
+              <h3>Members</h3>
+              {groups[currentGroup].members.length > 0 ? (
+                groups[currentGroup].members.map((member, index) => (
+                  <div key={index} className="member-item">
+                    {member}
+                  </div>
+                ))
+              ) : (
+                <div>No members</div>
+              )}
+              <input
+                type="text"
+                value={newMember}
+                onChange={(e) => setNewMember(e.target.value)}
+                placeholder="Add member"
+              />
+              <button onClick={addMember}>Add Member</button>
+            </div>
+            <div className="message-input-section">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type a message"
+              />
+              <button onClick={sendMessage}>Send</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export default App;
+
+
+
+css styling
+
+#app {
+  display: flex;
+  font-family: Arial, sans-serif;
+}
+
+.notification {
+  width: 100%;
+  padding: 10px;
+  background-color: #4caf50;
+  color: white;
+  text-align: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+
+.sidebar {
+  width: 20%;
+  background-color: #f4f4f4;
+  padding: 20px;
+  box-shadow: 2px 0px 5px rgba(0, 0, 0, 0.1);
+}
+
+.sidebar h2 {
+  margin-top: 0;
+}
+
+#groups div {
+  padding: 8px;
+  cursor: pointer;
+  margin: 5px 0;
+  background-color: #e9e9e9;
+}
+
+#groups div:hover {
+  background-color: #d4d4d4;
+}
+
+.chat-section {
+  width: 80%;
+  padding: 20px;
+  position: relative;
+}
+
+#group-title {
+  font-size: 24px;
+}
+
+#chat-window {
+  border: 1px solid #ddd;
+  padding: 10px;
+  height: 300px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  background-color: #fafafa;
+}
+
+.message {
+  padding: 8px;
+  margin: 5px 0;
+  background-color: #e1f5fe;
+  border-radius: 5px;
+}
+
+#members {
+  margin-top: 15px;
+}
+
+.member-item {
+  padding: 5px;
+  background-color: #f1f1f1;
+  margin-bottom: 5px;
+}
+
+.message-input-section {
+  display: flex;
+}
+
+.message-input-section input {
+  flex: 1;
+  padding: 10px;
+  margin-right: 5px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.message-input-section button {
+  padding: 10px 15px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
+
+.message-input-section button:hover {
+  background-color: #0056b3;
+}
