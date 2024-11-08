@@ -1,0 +1,204 @@
+const express = require('express');
+const mysql = require('mysql2');
+const bodyParser = require('body-parser');
+
+const app = express();
+const port = 3000;
+
+app.use(bodyParser.json());
+
+// MySQL connection setup
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root',       // replace with your MySQL username
+    password: 'arjun', // replace with your MySQL password
+    database: 'blog',    // replace with your database name
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+// Create a blog post
+app.post('/posts', (req, res) => {
+    const { title, content, category_id } = req.body;
+    const sql = 'INSERT INTO posts (title, content, category_id) VALUES (?, ?, ?)';
+    pool.query(sql, [title, content, category_id], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ message: 'Post created', postId: result.insertId });
+    });
+});
+
+// Add a comment to a post
+app.post('/posts/:postId/comments', (req, res) => {
+    const { postId } = req.params;
+    const { content } = req.body;
+    const sql = 'INSERT INTO comments (post_id, content) VALUES (?, ?)';
+    pool.query(sql, [postId, content], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ message: 'Comment added', commentId: result.insertId });
+    });
+});
+
+// Add a tag to a post
+app.post('/posts/:postId/tags', (req, res) => {
+    const { postId } = req.params;
+    const { tag_id } = req.body;
+    const sql = 'INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)';
+    pool.query(sql, [postId, tag_id], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ message: 'Tag added to post' });
+    });
+});
+
+// Fetch all posts
+app.get('/posts', (req, res) => {
+    const sql = `
+        SELECT p.id, p.title, p.content, c.name AS category
+        FROM posts p
+        LEFT JOIN categories c ON p.category_id = c.id
+    `;
+    pool.query(sql, (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(result);
+    });
+});
+
+// Fetch comments for a specific post
+app.get('/posts/:postId/comments', (req, res) => {
+    const { postId } = req.params;
+    const sql = 'SELECT * FROM comments WHERE post_id = ?';
+    pool.query(sql, [postId], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(result);
+    });
+});
+
+// Fetch tags for a specific post
+app.get('/posts/:postId/tags', (req, res) => {
+    const { postId } = req.params;
+    const sql = `
+        SELECT t.id, t.name
+        FROM tags t
+        JOIN post_tags pt ON t.id = pt.tag_id
+        WHERE pt.post_id = ?
+    `;
+    pool.query(sql, [postId], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(result);
+    });
+});
+
+// Start server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+
+
+/**
+ -- Create `blog` database
+CREATE DATABASE IF NOT EXISTS blog;
+USE blog;
+
+-- Create `posts` table
+CREATE TABLE posts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    category_id INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+);
+
+-- Create `comments` table
+CREATE TABLE comments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    post_id INT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+);
+
+-- Create `categories` table
+CREATE TABLE categories (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE
+);
+
+-- Create `tags` table
+CREATE TABLE tags (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL UNIQUE
+);
+
+-- Create `post_tags` table to link posts and tags (many-to-many relationship)
+CREATE TABLE post_tags (
+    post_id INT NOT NULL,
+    tag_id INT NOT NULL,
+    PRIMARY KEY (post_id, tag_id),
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
+    FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+);
+
+-- Insert sample categories
+INSERT INTO categories (name) VALUES ('Technology'), ('Lifestyle'), ('Education');
+
+-- Insert sample tags
+INSERT INTO tags (name) VALUES ('JavaScript'), ('Node.js'), ('MySQL'), ('Express.js');
+
+-- Insert a sample post
+INSERT INTO posts (title, content, category_id) VALUES 
+('My First Blog Post', 'This is the content of the first post.', 1);
+
+-- Insert sample comments for the post
+INSERT INTO comments (post_id, content) VALUES 
+(1, 'Great post!'), 
+(1, 'Very informative, thanks!');
+
+-- Link tags to the sample post
+INSERT INTO post_tags (post_id, tag_id) VALUES 
+(1, 1), 
+(1, 2);
+
+ */
+
+
+1)Create a Blog Post
+
+URL: http://localhost:3000/posts
+Method: POST
+Body:
+json
+Copy code
+{
+  "title": "A New Post",
+  "content": "Content of the new post",
+  "category_id": 2
+}
+
+2)Add a Comment to a Post
+
+URL: http://localhost:3000/posts/1/comments
+Method: POST
+Body:
+json
+Copy code
+{
+  "content": "This is a comment."
+}
+
+3)Add a Tag to a Post
+
+URL: http://localhost:3000/posts/1/tags
+Method: POST
+Body:
+json
+Copy code
+{
+  "tag_id": 3
+}
+
+4)Fetch All Posts
+
+URL: http://localhost:3000/posts
+Method: GET

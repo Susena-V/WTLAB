@@ -1,0 +1,283 @@
+const express = require('express');
+const mysql = require('mysql2');
+const bodyParser = require('body-parser');
+const bcrypt = require('bcryptjs');  // For hashing passwords
+const jwt = require('jsonwebtoken');  // For authentication
+
+const app = express();
+const port = 3000;
+
+// Middleware
+app.use(bodyParser.json());
+
+
+// MySQL connection
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root', // replace with your MySQL username
+    password: 'arjun', // replace with your MySQL password
+    database: 'twitter', // your database name
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+// Authentication middleware
+const authenticate = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(403).json({ error: 'Access denied' });
+
+    jwt.verify(token, 'your_jwt_secret', (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
+};
+
+// User registration (Sign up)
+app.post('/signup', async (req, res) => {
+    const { username, password, email } = req.body;
+    if (!username || !password || !email) {
+        return res.status(400).json({ error: 'Username, password, and email are required' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const sql = 'INSERT INTO users (username, password, email) VALUES (?, ?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [username, hashedPassword, email]);
+        res.status(201).json({ message: 'User created', user_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User login (returns JWT)
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    const sql = 'SELECT * FROM users WHERE username = ?';
+    try {
+        const [rows] = await pool.promise().query(sql, [username]);
+        const user = rows[0];
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ error: 'Invalid password' });
+        }
+
+        const token = jwt.sign({ id: user.id, username: user.username }, 'your_jwt_secret', { expiresIn: '1h' });
+        res.json({ message: 'Login successful', token });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// Create a tweet (post a tweet)
+app.post('/tweets', authenticate, async (req, res) => {
+    const { content } = req.body;
+    const { id } = req.user;  // user ID from JWT token
+
+    if (!content) {
+        return res.status(400).json({ error: 'Content is required' });
+    }
+
+    const sql = 'INSERT INTO tweets (user_id, content) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [id, content]);
+        res.status(201).json({ message: 'Tweet posted', tweet: { id: result.insertId, content } });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Retweet (repost a tweet)
+app.post('/retweets', authenticate, async (req, res) => {
+    const { tweet_id } = req.body;
+    const { id } = req.user;  // user ID from JWT token
+
+    if (!tweet_id) {
+        return res.status(400).json({ error: 'Tweet ID is required' });
+    }
+
+    const sql = 'INSERT INTO retweets (tweet_id, user_id) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [tweet_id, id]);
+        res.status(201).json({ message: 'Tweet retweeted', retweet: { id: result.insertId, tweet_id } });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fetch home page (news feed)
+app.get('/home', authenticate, async (req, res) => {
+    const { id } = req.user;  // user ID from JWT token
+    const sql = `
+        SELECT t.id, t.content, t.created_at, u.username
+        FROM tweets t
+        JOIN users u ON t.user_id = u.id
+        WHERE t.user_id = ? OR t.user_id IN (
+            SELECT followed_id FROM followers WHERE follower_id = ?
+        )
+        ORDER BY t.created_at DESC;
+    `;
+    try {
+        const [tweets] = await pool.promise().query(sql, [id, id]);
+        res.json(tweets);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Follow another user
+app.post('/follow', authenticate, async (req, res) => {
+    const { followed_id } = req.body;
+    const { id } = req.user;  // user ID from JWT token
+
+    if (!followed_id) {
+        return res.status(400).json({ error: 'Followed user ID is required' });
+    }
+
+    const sql = 'INSERT INTO followers (follower_id, followed_id) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [id, followed_id]);
+        res.status(201).json({ message: 'User followed' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Unfollow a user
+app.post('/unfollow', authenticate, async (req, res) => {
+    const { followed_id } = req.body;
+    const { id } = req.user;  // user ID from JWT token
+
+    if (!followed_id) {
+        return res.status(400).json({ error: 'Followed user ID is required' });
+    }
+
+    const sql = 'DELETE FROM followers WHERE follower_id = ? AND followed_id = ?';
+    try {
+        const [result] = await pool.promise().query(sql, [id, followed_id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'No follow relationship found' });
+        }
+        res.json({ message: 'User unfollowed' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Start the server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+/**
+-- Create the users table to store user information
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create the tweets table to store user tweets
+CREATE TABLE tweets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Create the retweets table to store retweet information
+CREATE TABLE retweets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    tweet_id INT NOT NULL,
+    user_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (tweet_id) REFERENCES tweets(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Create the followers table to manage user follow relationships
+CREATE TABLE followers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    follower_id INT NOT NULL,
+    followed_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (followed_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (follower_id, followed_id) -- Prevent duplicate relationships
+);
+
+-- Insert sample users into the users table
+INSERT INTO users (username, password, email) VALUES
+('alice', 'password123', 'alice@example.com'),
+('bob', 'password456', 'bob@example.com'),
+('charlie', 'password789', 'charlie@example.com'),
+('dave', 'password101', 'dave@example.com');
+
+-- Insert sample tweets into the tweets table
+INSERT INTO tweets (user_id, content) VALUES
+(1, 'This is Alice\'s first tweet!'),
+(2, 'Hello, world! Bob here.'),
+(3, 'Charlie joining the Twitterverse!'),
+(1, 'Alice\'s second tweet!'),
+(4, 'Dave loves coding!');
+
+-- Insert sample retweets into the retweets table
+INSERT INTO retweets (tweet_id, user_id) VALUES
+(1, 2),  -- Bob retweeted Alice's first tweet
+(2, 3),  -- Charlie retweeted Bob's tweet
+(3, 4),  -- Dave retweeted Charlie's tweet
+(1, 4);  -- Dave retweeted Alice's first tweet
+
+-- Insert sample followers into the followers table
+INSERT INTO followers (follower_id, followed_id) VALUES
+(1, 2),  -- Alice follows Bob
+(2, 3),  -- Bob follows Charlie
+(3, 4),  -- Charlie follows Dave
+(1, 3),  -- Alice follows Charlie
+(4, 1);  -- Dave follows Alice
+
+ */
+
+a. Login (POST /login)
+URL: http://localhost:3000/login
+Method: POST
+Headers:
+Content-Type: application/json
+Body:
+{
+  "username": "your_username",
+  "password": "your_password"
+}
+
+b. Post a Tweet (POST /tweets)
+URL: http://localhost:3000/tweets
+Method: POST
+Headers:
+Authorization: Bearer <your_token_here>
+Content-Type: application/json
+Body:
+json
+Copy code
+{
+  "content": "This is a tweet"
+}
+
+c. Get Home Feed (GET /home)
+URL: http://localhost:3000/home
+Method: GET
+Headers:
+Authorization: Bearer <your_token_here>
+Description: Fetch the user's home feed (tweets from followed users).

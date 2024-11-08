@@ -1,0 +1,258 @@
+const express = require('express');
+const mysql = require('mysql2');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const bodyParser = require('body-parser');
+const dotenv = require('dotenv');
+
+dotenv.config();
+
+const app = express();
+const port = 3000;
+
+// Middleware
+app.use(bodyParser.json());
+
+// MySQL connection
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root', 
+    password: 'arjun', // replace with your MySQL password
+    database: 'job',
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+// Authentication middleware
+const authenticate = (req, res, next) => {
+    const token = req.header('Authorization');
+    if (!token) return res.status(403).json({ error: 'Access denied' });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
+};
+
+// User Registration (Job Seeker/Employer)
+app.post('/signup', async (req, res) => {
+    const { username, password, email, role } = req.body;
+
+    if (!username || !password || !email || !role) {
+        return res.status(400).json({ error: 'Username, password, email, and role are required' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const sql = 'INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [username, hashedPassword, email, role]);
+        res.status(201).json({ message: 'User created', user_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User Login (returns JWT)
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    if (!username || !password) {
+        return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    const sql = 'SELECT * FROM users WHERE username = ?';
+    try {
+        const [rows] = await pool.promise().query(sql, [username]);
+        const user = rows[0];
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ error: 'Invalid password' });
+        }
+
+        const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1h' });
+        res.json({ message: 'Login successful', token });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Post a Job (Employer)
+app.post('/jobs', authenticate, async (req, res) => {
+    const { title, description } = req.body;
+    const { id, role } = req.user;  // user ID from JWT token
+
+    if (role !== 'employer') {
+        return res.status(403).json({ error: 'Only employers can post jobs' });
+    }
+
+    if (!title || !description) {
+        return res.status(400).json({ error: 'Job title and description are required' });
+    }
+
+    const sql = 'INSERT INTO jobs (title, description, employer_id) VALUES (?, ?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [title, description, id]);
+        res.status(201).json({ message: 'Job posted', job_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Job Seekers apply for a job
+app.post('/apply', authenticate, async (req, res) => {
+    const { job_id } = req.body;
+    const { id, role } = req.user;  // user ID from JWT token
+
+    if (role !== 'job_seeker') {
+        return res.status(403).json({ error: 'Only job seekers can apply for jobs' });
+    }
+
+    const sql = 'INSERT INTO applications (job_id, job_seeker_id) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [job_id, id]);
+        res.status(201).json({ message: 'Application submitted', application_id: result.insertId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get job applications (for Employers to track applicants)
+app.get('/applications/:jobId', authenticate, async (req, res) => {
+    const { jobId } = req.params;
+    const { id, role } = req.user;
+
+    if (role !== 'employer') {
+        return res.status(403).json({ error: 'Only employers can view applications' });
+    }
+
+    const sql = 'SELECT a.*, u.username FROM applications a JOIN users u ON a.job_seeker_id = u.id WHERE a.job_id = ?';
+    try {
+        const [applications] = await pool.promise().query(sql, [jobId]);
+        res.json(applications);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update application status (Employer accepts or rejects application)
+app.post('/update-application', authenticate, async (req, res) => {
+    const { application_id, status } = req.body;
+    const { id, role } = req.user;  // user ID from JWT token
+
+    if (role !== 'employer') {
+        return res.status(403).json({ error: 'Only employers can update application status' });
+    }
+
+    const sql = 'UPDATE applications SET status = ? WHERE id = ?';
+    try {
+        const [result] = await pool.promise().query(sql, [status, application_id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Application not found' });
+        }
+        res.json({ message: 'Application status updated' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Start the server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+/** 
+ -- Create Users table (Job Seekers and Employers)
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    password VARCHAR(255) NOT NULL,
+    email VARCHAR(100) NOT NULL UNIQUE,
+    role ENUM('job_seeker', 'employer') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create Jobs table (for job postings by employers)
+CREATE TABLE jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(100) NOT NULL,
+    description TEXT NOT NULL,
+    employer_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employer_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Create Applications table (for job applications by job seekers)
+CREATE TABLE applications (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    job_id INT NOT NULL,
+    job_seeker_id INT NOT NULL,
+    status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (job_seeker_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Insert Employers
+INSERT INTO users (username, password, email, role) 
+VALUES
+('john_doe', 'hashed_password_1', 'john@example.com', 'employer'),
+('jane_smith', 'hashed_password_2', 'jane@example.com', 'employer');
+
+-- Insert Job Seekers
+INSERT INTO users (username, password, email, role) 
+VALUES
+('alice_wong', 'hashed_password_3', 'alice@example.com', 'job_seeker'),
+('bob_jones', 'hashed_password_4', 'bob@example.com', 'job_seeker');
+
+-- Insert Jobs
+INSERT INTO jobs (title, description, employer_id) 
+VALUES
+('Software Developer', 'Looking for an experienced software developer to join our team.', 1),  -- Employer: John Doe
+('Data Scientist', 'Hiring a data scientist with knowledge of machine learning.', 2);  -- Employer: Jane Smith
+
+-- Insert Job Applications
+INSERT INTO applications (job_id, job_seeker_id, status) 
+VALUES
+(1, 3, 'pending'),  -- Job Seeker: Alice Wong applied for Software Developer
+(2, 4, 'pending');  -- Job Seeker: Bob Jones applied for Data Scientist
+*/
+
+a. Login (POST /login)
+URL: http://localhost:3000/login
+Method: POST
+Headers:
+Content-Type: application/json
+Body:
+json
+Copy code
+{
+  "username": "job_seeker",
+  "password": "password123"
+}
+
+b. Apply for a Job (POST /applications)
+URL: http://localhost:3000/applications
+Method: POST
+Headers:
+Authorization: Bearer <your_token_here>
+Content-Type: application/json
+Body:
+json
+Copy code
+{
+  "job_post_id": 1,
+  "cover_letter": "I am very interested in this role"
+}
+
+c. Fetch Applications (GET /applications)
+URL: http://localhost:3000/applications
+Method: GET
+Headers:
+Authorization: Bearer <your_token_here>
+Description: Fetch all job applications submitted by the user

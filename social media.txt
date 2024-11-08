@@ -1,0 +1,191 @@
+const express = require('express');
+const mysql = require('mysql2');
+const bodyParser = require('body-parser');
+
+const app = express();
+const port = 3000;
+
+// Middleware
+app.use(bodyParser.json());
+
+// MySQL connection
+const pool = mysql.createPool({
+    host: 'localhost',
+    user: 'root', // replace with your MySQL username
+    password: 'arjun', // replace with your MySQL password
+    database: 'social', // your database name
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+});
+
+// Create a post
+app.post('/posts', async (req, res) => {
+    console.log(req.body);  // Log the incoming request body to verify data
+    const { user_id, content } = req.body;
+
+    if (!user_id || !content) {
+        return res.status(400).json({ error: 'user_id and content are required' });
+    }
+
+    const sql = 'INSERT INTO posts (user_id, content) VALUES (?, ?)';
+    try {
+        const [result] = await pool.promise().query(sql, [user_id, content]);
+        res.status(201).json(result);  // Return created post
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Edit a post
+app.put('/posts/:id', async (req, res) => {
+    const { id } = req.params;
+    const { user_id, content } = req.body;
+    const sql = 'UPDATE posts SET content = ? WHERE id = ? AND user_id = ?';
+    try {
+        const [result] = await pool.promise().query(sql, [content, id, user_id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Post not found or user unauthorized' });
+        }
+        res.json({ message: 'Post updated successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete a post
+app.delete('/posts/:id', async (req, res) => {
+    const { id } = req.params;
+    const { user_id } = req.body;
+    const sql = 'DELETE FROM posts WHERE id = ? AND user_id = ?';
+    try {
+        const [result] = await pool.promise().query(sql, [id, user_id]);
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Post not found or user unauthorized' });
+        }
+        res.json({ message: 'Post deleted successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fetch all posts
+app.get('/posts', async (req, res) => {
+    const sql = `
+        SELECT p.id, p.content, p.created_at, u.username
+        FROM posts p
+        JOIN users u ON p.user_id = u.id
+        ORDER BY p.created_at DESC;
+    `;
+    try {
+        const [result] = await pool.promise().query(sql);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fetch news feed for a user based on friendships (followers/followed users)
+app.get('/newsfeed/:userId', async (req, res) => {
+    const { userId } = req.params;
+    const sql = `
+        SELECT p.id, p.content, p.created_at, u.username
+        FROM posts p
+        JOIN friendships f ON p.user_id = f.followed_id
+        JOIN users u ON p.user_id = u.id
+        WHERE f.follower_id = ?
+        ORDER BY p.created_at DESC;
+    `;
+    try {
+        const [result] = await pool.promise().query(sql, [userId]);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Start the server
+app.listen(port, () => {
+    console.log(`Server is running on http://localhost:${port}`);
+});
+
+/**
+ -- Users table to store user information
+CREATE TABLE users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(50) NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Friendships table to manage friendships or followers
+CREATE TABLE friendships (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    follower_id INT NOT NULL,
+    followed_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (follower_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (followed_id) REFERENCES users(id) ON DELETE CASCADE,
+    UNIQUE (follower_id, followed_id) -- Prevent duplicate relationships
+);
+
+-- Posts table to store user posts
+CREATE TABLE posts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- Insert sample users
+INSERT INTO users (username) VALUES ('user1'), ('user2'), ('user3');
+
+-- Insert sample friendships
+INSERT INTO friendships (follower_id, followed_id) VALUES (1, 2), (1, 3), (2, 3);
+
+-- Insert sample posts
+INSERT INTO posts (user_id, content) VALUES 
+(1, 'Hello from user1!'),
+(2, 'Hello from user2!'),
+(3, 'Hello from user3!'),
+(1, 'Another post from user1.');
+
+-- Select all posts
+SELECT * FROM posts;
+
+ */
+
+a. Login (POST /login)
+URL: http://localhost:3000/login
+Method: POST
+Headers:
+Content-Type: application/json
+Body:
+json
+Copy code
+{
+  "username": "social_user",
+  "password": "password123"
+}
+
+
+b. Create a Post (POST /posts)
+URL: http://localhost:3000/posts
+Method: POST
+Headers:
+Authorization: Bearer <your_token_here>
+Content-Type: application/json
+Body:
+json
+Copy code
+{
+  "content": "This is a new post"
+}
+
+c. Fetch Posts (GET /posts)
+URL: http://localhost:3000/posts
+Method: GET
+Headers:
+Authorization: Bearer <your_token_here>
+Description: Fetch all posts (your timeline).
+
